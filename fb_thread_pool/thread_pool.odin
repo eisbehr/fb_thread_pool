@@ -121,6 +121,10 @@ pool_num_waiting_tasks :: #force_inline proc(pool: ^Pool) -> int {
 	return intrinsics.atomic_load(&pool.num_waiting)
 }
 
+pool_num_in_processing_tasks :: #force_inline proc(pool: ^Pool) -> int {
+	return intrinsics.atomic_load(&pool.num_in_processing)
+}
+
 // Outstanding tasks are all tasks that are not done, that is, tasks that are
 // waiting, as well as tasks that are currently being processed
 pool_num_outstanding_tasks :: #force_inline proc(pool: ^Pool) -> int {
