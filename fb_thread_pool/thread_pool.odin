@@ -1,9 +1,15 @@
+// A thread pool runs a number of threads and distributes tasks among them.
+//
+// The thread pool needs to be initialized before use, and destroyed afterwards.
+// You can start adding tasks after initialization, but you will have to call
+// start() to begin processing. Tasks which are done processing can be taken
+// out with a call to pop_done_task().
 package fb_thread_pool
 
 import "core:intrinsics"
-import "core:sync"
+import sync "core:sync/sync2"
 import "core:mem"
-import th "core:thread"
+import "core:thread"
 
 Task_Proc :: #type proc(task: ^Task)
 
@@ -15,15 +21,15 @@ Task :: struct {
 
 Task_Id :: distinct i32
 
-// NOTE: Do not access the pools members directly while the pool threads are
-// running since they use different kinds of locking and mutual exclusion
-// devices. Careless access can and will lead to nasty bugs
+// Do not access the pool's members directly while the pool threads are
+// running, since they use different kinds of locking and mutual exclusion
+// devices. Careless access can and will lead to nasty bugs.
 Pool :: struct {
 	allocator:             mem.Allocator,
 	mutex:                 sync.Mutex,
-	sem_available:         sync.Semaphore,
+	sem_available:         sync.Sema,
 
-	// the following values are atomic and can be read without taking the mutex
+	// the following values are atomic
 	num_waiting : int,
 	num_in_processing: int,
 	num_outstanding: int, // num_waiting + num_in_processing
@@ -32,79 +38,80 @@ Pool :: struct {
 
 	is_running:            bool,
 
-	threads: []^th.Thread,
+	threads: []^thread.Thread,
 
 	tasks: [dynamic]Task,
 	tasks_done: [dynamic]Task,
 }
 
-pool_init :: proc(pool: ^Pool, thread_count: int, allocator := context.allocator) {
-	worker_thread_internal :: proc(t: ^th.Thread) {
+init :: proc(pool: ^Pool, thread_count: int, allocator := context.allocator) {
+	worker_thread_internal :: proc(t: ^thread.Thread) {
 		pool := (^Pool)(t.data)
 
-		for pool.is_running {
-			sync.semaphore_wait_for(&pool.sem_available)
+		for intrinsics.atomic_load(&pool.is_running) {
+			sync.wait(&pool.sem_available)
 
-			if task, ok := pool_pop_waiting_task(pool); ok {
-				pool_do_work(pool, &task)
+			if task, ok := pop_waiting_task(pool); ok {
+				do_work(pool, &task)
 			}
 		}
 
-		sync.semaphore_post(&pool.sem_available, 1)
+		sync.post(&pool.sem_available, 1)
 	}
 
 	context.allocator = allocator
 	pool.allocator = allocator
 	pool.tasks = make([dynamic]Task)
 	pool.tasks_done = make([dynamic]Task)
-	pool.threads = make([]^th.Thread, thread_count)
+	pool.threads = make([]^thread.Thread, thread_count)
 
-	sync.mutex_init(&pool.mutex)
-	sync.semaphore_init(&pool.sem_available)
 	pool.is_running = true
 
 	for _, i in pool.threads {
-		t := th.create(worker_thread_internal)
+		t := thread.create(worker_thread_internal)
 		t.user_index = i
 		t.data = pool
 		pool.threads[i] = t
 	}
 }
 
-pool_destroy :: proc(pool: ^Pool) {
+destroy :: proc(pool: ^Pool) {
 	delete(pool.tasks)
+	delete(pool.tasks_done)
 
-	for thread in &pool.threads {
-		th.destroy(thread)
+	for t in &pool.threads {
+		thread.destroy(t)
 	}
 
 	delete(pool.threads, pool.allocator)
-
-	sync.mutex_destroy(&pool.mutex)
-	sync.semaphore_destroy(&pool.sem_available)
 }
 
-pool_start :: proc(pool: ^Pool) {
+start :: proc(pool: ^Pool) {
 	for t in pool.threads {
-		th.start(t)
+		thread.start(t)
 	}
 }
 
-pool_join :: proc(pool: ^Pool) {
-	pool.is_running = false
+// Finish tasks that have already started processing, then shut down all pool
+// threads. Might leave over waiting tasks, any memory allocated for the
+// user data of those tasks will not be freed by a pool destroy()
+join :: proc(pool: ^Pool) {
+	intrinsics.atomic_store(&pool.is_running, false)
 
-	sync.semaphore_post(&pool.sem_available, len(pool.threads))
+	sync.post(&pool.sem_available, len(pool.threads))
 
-	th.yield()
+	thread.yield()
 
 	for t in pool.threads {
-		th.join(t)
+		thread.join(t)
 	}
 }
 
-pool_add_task :: proc(pool: ^Pool, procedure: Task_Proc, data: rawptr, user_index: int = 0) {
-	sync.mutex_lock(&pool.mutex)
-	defer sync.mutex_unlock(&pool.mutex)
+// Tasks can be added from any thread, not just the thread that created the
+// thread pool. You can even add tasks from other tasks.
+add_task :: proc(pool: ^Pool, procedure: Task_Proc, data: rawptr, user_index: int = 0) {
+	sync.lock(&pool.mutex)
+	defer sync.unlock(&pool.mutex)
 
 	task: Task
 	task.procedure = procedure
@@ -114,30 +121,42 @@ pool_add_task :: proc(pool: ^Pool, procedure: Task_Proc, data: rawptr, user_inde
 	append(&pool.tasks, task)
 	intrinsics.atomic_add(&pool.num_waiting, 1)
 	intrinsics.atomic_add(&pool.num_outstanding, 1)
-	sync.semaphore_post(&pool.sem_available, 1)
+	sync.post(&pool.sem_available, 1)
 }
 
-pool_num_waiting_tasks :: #force_inline proc(pool: ^Pool) -> int {
+// Number of tasks waiting to be processed. Only informational, mostly for
+// debugging. Don't rely on this value being consistent with other num_*
+// values.
+num_waiting_tasks :: #force_inline proc(pool: ^Pool) -> int {
 	return intrinsics.atomic_load(&pool.num_waiting)
 }
 
-pool_num_in_processing_tasks :: #force_inline proc(pool: ^Pool) -> int {
+// Number of tasks currently being processed. Only informational, mostly for
+// debugging. Don't rely on this value being consistent with other num_*
+// values.
+num_in_processing_tasks :: #force_inline proc(pool: ^Pool) -> int {
 	return intrinsics.atomic_load(&pool.num_in_processing)
 }
 
 // Outstanding tasks are all tasks that are not done, that is, tasks that are
-// waiting, as well as tasks that are currently being processed
-pool_num_outstanding_tasks :: #force_inline proc(pool: ^Pool) -> int {
+// waiting, as well as tasks that are currently being processed. Only
+// informational, mostly for debugging. Don't rely on this value being
+// consistent with other num_* values.
+num_outstanding_tasks :: #force_inline proc(pool: ^Pool) -> int {
 	return intrinsics.atomic_load(&pool.num_outstanding)
 }
 
-pool_num_done_tasks :: #force_inline proc(pool: ^Pool) -> int {
+// Number of tasks which are done processing. Only informational, mostly for
+// debugging. Don't rely on this value being consistent with other num_*
+// values.
+num_done_tasks :: #force_inline proc(pool: ^Pool) -> int {
 	return intrinsics.atomic_load(&pool.num_done)
 }
 
-pool_pop_waiting_task :: proc(pool: ^Pool) -> (task: Task, got_task: bool = false) {
-	sync.mutex_lock(&pool.mutex)
-	defer sync.mutex_unlock(&pool.mutex)
+// Mostly for internal use
+pop_waiting_task :: proc(pool: ^Pool) -> (task: Task, got_task: bool = false) {
+	sync.lock(&pool.mutex)
+	defer sync.unlock(&pool.mutex)
 
 	if len(pool.tasks) != 0 {
 		intrinsics.atomic_sub(&pool.num_waiting, 1)
@@ -149,9 +168,10 @@ pool_pop_waiting_task :: proc(pool: ^Pool) -> (task: Task, got_task: bool = fals
 	return
 }
 
-pool_pop_done_task :: proc(pool: ^Pool) -> (task: Task, got_task: bool = false) {
-	sync.mutex_lock(&pool.mutex)
-	defer sync.mutex_unlock(&pool.mutex)
+// Use this to take out finished tasks.
+pop_done_task :: proc(pool: ^Pool) -> (task: Task, got_task: bool = false) {
+	sync.lock(&pool.mutex)
+	defer sync.unlock(&pool.mutex)
 
 	if len(pool.tasks_done) != 0 {
 		intrinsics.atomic_sub(&pool.num_done, 1)
@@ -162,11 +182,12 @@ pool_pop_done_task :: proc(pool: ^Pool) -> (task: Task, got_task: bool = false) 
 	return
 }
 
-pool_do_work :: proc(pool: ^Pool, task: ^Task) {
+// Mostly for internal use
+do_work :: proc(pool: ^Pool, task: ^Task) {
 	task.procedure(task)
 
-	sync.mutex_lock(&pool.mutex)
-	defer sync.mutex_unlock(&pool.mutex)
+	sync.lock(&pool.mutex)
+	defer sync.unlock(&pool.mutex)
 
 	append(&pool.tasks_done, task^)
 	intrinsics.atomic_sub(&pool.num_in_processing, 1)
@@ -174,12 +195,12 @@ pool_do_work :: proc(pool: ^Pool, task: ^Task) {
 	intrinsics.atomic_add(&pool.num_done, 1)
 }
 
-// process the rest of the tasks, also use this thread for processing, then join
+// Process the rest of the tasks, also use this thread for processing, then join
 // all the pool threads.
-pool_finish :: proc(pool: ^Pool) {
-	for task in pool_pop_waiting_task(pool) {
+finish :: proc(pool: ^Pool) {
+	for task in pop_waiting_task(pool) {
 		t:= task
-		pool_do_work(pool, &t)
+		do_work(pool, &t)
 	}
-	pool_join(pool)
+	join(pool)
 }
