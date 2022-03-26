@@ -21,7 +21,7 @@ Task_Id :: distinct i32
 Pool :: struct {
 	allocator:             mem.Allocator,
 	mutex:                 sync.Mutex,
-	sem_available:         sync.Semaphore,	
+	sem_available:         sync.Semaphore,
 
 	// the following values are atomic and can be read without taking the mutex
 	num_waiting : int,
@@ -29,7 +29,7 @@ Pool :: struct {
 	num_outstanding: int, // num_waiting + num_in_processing
 	num_done: int,
 	// end of atomics
-	
+
 	is_running:            bool,
 
 	threads: []^th.Thread,
@@ -47,7 +47,7 @@ pool_init :: proc(pool: ^Pool, thread_count: int, allocator := context.allocator
 
 			if task, ok := pool_pop_waiting_task(pool); ok {
 				pool_do_work(pool, &task)
-			}			
+			}
 		}
 
 		sync.semaphore_post(&pool.sem_available, 1)
@@ -81,7 +81,7 @@ pool_destroy :: proc(pool: ^Pool) {
 	delete(pool.threads, pool.allocator)
 
 	sync.mutex_destroy(&pool.mutex)
-	sync.semaphore_destroy(&pool.sem_available)	
+	sync.semaphore_destroy(&pool.sem_available)
 }
 
 pool_start :: proc(pool: ^Pool) {
@@ -113,11 +113,11 @@ pool_add_task :: proc(pool: ^Pool, procedure: Task_Proc, data: rawptr, user_inde
 
 	append(&pool.tasks, task)
 	intrinsics.atomic_add(&pool.num_waiting, 1)
-	intrinsics.atomic_add(&pool.num_outstanding, 1)	
-	sync.semaphore_post(&pool.sem_available, 1)	
+	intrinsics.atomic_add(&pool.num_outstanding, 1)
+	sync.semaphore_post(&pool.sem_available, 1)
 }
 
-pool_num_waiting_tasks :: #force_inline proc(pool: ^Pool) -> int {	
+pool_num_waiting_tasks :: #force_inline proc(pool: ^Pool) -> int {
 	return intrinsics.atomic_load(&pool.num_waiting)
 }
 
@@ -135,7 +135,7 @@ pool_pop_waiting_task :: proc(pool: ^Pool) -> (task: Task, got_task: bool = fals
 	sync.mutex_lock(&pool.mutex)
 	defer sync.mutex_unlock(&pool.mutex)
 
-	if len(pool.tasks) != 0 {		
+	if len(pool.tasks) != 0 {
 		intrinsics.atomic_sub(&pool.num_waiting, 1)
 		intrinsics.atomic_add(&pool.num_in_processing, 1)
 		task = pop_front(&pool.tasks)
@@ -145,13 +145,13 @@ pool_pop_waiting_task :: proc(pool: ^Pool) -> (task: Task, got_task: bool = fals
 	return
 }
 
-pool_pop_done_task :: proc(pool: ^Pool) -> (task: Task, got_task: bool = false) {	
-	sync.mutex_lock(&pool.mutex) 
+pool_pop_done_task :: proc(pool: ^Pool) -> (task: Task, got_task: bool = false) {
+	sync.mutex_lock(&pool.mutex)
 	defer sync.mutex_unlock(&pool.mutex)
 
 	if len(pool.tasks_done) != 0 {
 		intrinsics.atomic_sub(&pool.num_done, 1)
-		task = pop_front(&pool.tasks_done)		
+		task = pop_front(&pool.tasks_done)
 		got_task = true
 	}
 
@@ -167,15 +167,15 @@ pool_do_work :: proc(pool: ^Pool, task: ^Task) {
 	append(&pool.tasks_done, task^)
 	intrinsics.atomic_sub(&pool.num_in_processing, 1)
 	intrinsics.atomic_sub(&pool.num_outstanding, 1)
-	intrinsics.atomic_add(&pool.num_done, 1)	
+	intrinsics.atomic_add(&pool.num_done, 1)
 }
 
 // process the rest of the tasks, also use this thread for processing, then join
 // all the pool threads.
-pool_finish :: proc(pool: ^Pool) {	
+pool_finish :: proc(pool: ^Pool) {
 	for task in pool_pop_waiting_task(pool) {
 		t:= task
 		pool_do_work(pool, &t)
 	}
-	pool_join(pool)	
+	pool_join(pool)
 }

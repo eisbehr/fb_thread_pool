@@ -5,7 +5,7 @@ import "core:time"
 import "core:math/rand"
 import th "fb_thread_pool"
 
-task_proc :: proc(task: ^th.Task) {	
+task_proc :: proc(task: ^th.Task) {
 	task.user_index += 10
 	time.sleep(1*time.Second)
 }
@@ -19,14 +19,14 @@ main :: proc() {
 
 	for i in 1..num_tasks {
 		th.pool_add_task(&pool, task_proc, nil, i)
-	}	
+	}
 	fmt.println("Waiting tasks: ", th.pool_num_waiting_tasks(&pool))
 	th.pool_start(&pool)
 
 	num_tasks_done:= 0
 	MAX_RANDOM_ADD :: 10
 	for th.pool_num_outstanding_tasks(&pool)>0 {
-		for t in th.pool_pop_done_task(&pool) {		
+		for t in th.pool_pop_done_task(&pool) {
 			fmt.printf("Done task number %i -> %i\n", t.user_index-10, t.user_index)
 			num_tasks_done += 1
 
@@ -42,7 +42,7 @@ main :: proc() {
 	for i in 1..NUM_TASKS {
 		num_tasks += 1
 		th.pool_add_task(&pool, task_proc, nil, num_tasks)
-	}	
+	}
 
 	fmt.println("waiting for all tasks to process, and doing work on this thread too")
 	th.pool_finish(&pool)
@@ -50,11 +50,11 @@ main :: proc() {
 		fmt.println("Error, still outstanding tasks left after pool_wait_and_process(&pool)")
 		return
 	}
-	for t in th.pool_pop_done_task(&pool) {		
+	for t in th.pool_pop_done_task(&pool) {
 		fmt.printf("Done task number %i -> %i\n", t.user_index-10, t.user_index)
-		num_tasks_done += 1		
+		num_tasks_done += 1
 	}
 	fmt.printf("More Tasks done %i/%i inital batch %i, second batch as well\n", num_tasks_done, num_tasks, NUM_TASKS)
-	
+
 	fmt.println("Thread pool done")
 }
