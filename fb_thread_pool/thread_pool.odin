@@ -46,7 +46,7 @@ Pool :: struct {
 }
 
 //Once in initialized, the pool's memory address is not allowed to change until
-//it is destroyed.
+//it is destroyed. If thread_count < 1, thread count 1 will be used
 init :: proc(pool: ^Pool, thread_count: int, allocator := context.allocator) {
 	worker_thread_internal :: proc(t: ^thread.Thread) {
 		pool := (^Pool)(t.data)
@@ -61,12 +61,14 @@ init :: proc(pool: ^Pool, thread_count: int, allocator := context.allocator) {
 
 		sync.post(&pool.sem_available, 1)
 	}
+	actual_thread_count := thread_count
+	if actual_thread_count<1 do actual_thread_count = 1
 
 	context.allocator = allocator
 	pool.allocator = allocator
 	pool.tasks = make([dynamic]Task)
 	pool.tasks_done = make([dynamic]Task)
-	pool.threads = make([]^thread.Thread, thread_count)
+	pool.threads = make([]^thread.Thread, actual_thread_count)
 
 	pool.is_running = true
 

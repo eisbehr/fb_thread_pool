@@ -51,6 +51,7 @@ tests :: proc() {
 				}
 			}
 		}
+		time.sleep(100*time.Millisecond)
 	}
 	fmt.printf("Tasks done %i/%i (%i+%i)\n", num_tasks_done, num_tasks, NUM_TASKS, num_random_tasks)
 	assert(num_tasks_done==num_tasks)
@@ -66,6 +67,7 @@ tests :: proc() {
 				num_tasks_done += 1
 				}
 		}
+		time.sleep(100*time.Millisecond)
 	}
 	fmt.printf("Tasks done %i/%i (%i+%i+%i)\n", num_tasks_done, num_tasks, NUM_TASKS, num_random_tasks, NUM_SPAWNING_TASKS)
 	assert(num_tasks_done==num_tasks)
@@ -100,4 +102,5 @@ main :: proc() {
 		fmt.printf("BATCH ITERATION %i/%i\n", i, NUM_ITERATIONS)
 		tests()
 	}
+	fmt.printf("All %i iterations successful\n", NUM_ITERATIONS)
 }
