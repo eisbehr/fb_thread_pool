@@ -2,12 +2,14 @@ package main
 
 import "core:fmt"
 import "core:time"
+import "core:intrinsics"
 import "core:math/rand"
 import pool "fb_thread_pool"
 
 task_proc_simple :: proc(task: ^pool.Task) {
-	task.user_index += 10
-	time.sleep(1*time.Second)
+	r := rand.create(u64(task.user_index))
+	ms:= time.Duration(50+rand.int31_max(450, &r))
+	time.sleep(ms*time.Millisecond)
 }
 
 task_proc_spawning :: proc(task: ^pool.Task) {
@@ -16,7 +18,9 @@ task_proc_spawning :: proc(task: ^pool.Task) {
 		pool.add_task(tp, task_proc_spawning, task.data, task.user_index+1)
 		pool.add_task(tp, task_proc_spawning, task.data, task.user_index+1)
 	}
-	time.sleep(1*time.Second)
+	r := rand.create(u64(task.user_index))
+	ms:= time.Duration(50+rand.int31_max(450, &r))
+	time.sleep(ms*time.Millisecond)
 }
 
 tests :: proc() {
@@ -24,12 +28,13 @@ tests :: proc() {
 	tp: pool.Pool
 	NUM_TASKS :: 25
 	num_tasks:= NUM_TASKS
-	num_threads:= int(rand.int31_max(15))
+	r := rand.create(u64(intrinsics.read_cycle_counter()))
+	num_threads:= int(rand.int31_max(15, &r))
 	fmt.printf("Running pool with %i threads\n", num_threads)
 	pool.init(&tp, num_threads)
 
 	for i in 1..num_tasks {
-		pool.add_task(&tp, task_proc_simple, nil, i)
+		pool.add_task(&tp, task_proc_simple, nil, int(rand.int31(&r)))
 	}
 	fmt.println("Waiting tasks: ", pool.num_waiting_tasks(&tp))
 	pool.start(&tp)
@@ -40,14 +45,14 @@ tests :: proc() {
 	for pool.num_outstanding_tasks(&tp)>0||pool.num_done_tasks(&tp)>0 {
 		if pool.num_done_tasks(&tp)>0 {
 			for t in pool.pop_done_task(&tp) {
-				fmt.printf("Done task number %i -> %i\n", t.user_index-10, t.user_index)
+				//fmt.printf("Done task number %i -> %i\n", t.user_index-10, t.user_index)
 				num_tasks_done += 1
 
 				if rand.int31_max(10) == 0 {
 					fmt.println("randomly adding another task")
 					num_tasks += 1
 					num_random_tasks += 1
-					pool.add_task(&tp, task_proc_simple, nil, num_tasks)
+					pool.add_task(&tp, task_proc_simple, nil, int(rand.int31(&r)))
 				}
 			}
 		}
@@ -75,7 +80,7 @@ tests :: proc() {
 	fmt.println("Add another batch of tasks")
 	for i in 1..NUM_TASKS {
 		num_tasks += 1
-		pool.add_task(&tp, task_proc_simple, nil, num_tasks)
+		pool.add_task(&tp, task_proc_simple, nil, int(rand.int31(&r)))
 	}
 
 	fmt.println("waiting for all tasks to process, and doing work on this thread too")
@@ -85,8 +90,8 @@ tests :: proc() {
 		return
 	}
 
-	for t in pool.pop_done_task(&tp) {
-		fmt.printf("Done task number %i -> %i\n", t.user_index-10, t.user_index)
+	for _ in pool.pop_done_task(&tp) {
+		//fmt.printf("Done task number %i -> %i\n", t.user_index-10, t.user_index)
 		num_tasks_done += 1
 	}
 	fmt.printf("Tasks done %i/%i (%i+%i+%i+%i)\n", num_tasks_done, num_tasks, NUM_TASKS, num_random_tasks, NUM_SPAWNING_TASKS, NUM_TASKS)
