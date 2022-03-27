@@ -28,9 +28,9 @@ Task :: struct {
 // pool's memory address is not allowed to change after it is initialized until
 // it is destroyed.
 Pool :: struct {
-	allocator:             mem.Allocator,
-	mutex:                 sync.Mutex,
-	sem_available:         sync.Sema,
+	allocator: mem.Allocator,
+	mutex: sync.Mutex,
+	sem_available: sync.Sema,
 
 	// the following values are atomic
 	num_waiting : int,
@@ -39,7 +39,7 @@ Pool :: struct {
 	num_done: int,
 	// end of atomics
 
-	is_running:            bool,
+	is_running: bool,
 
 	threads: []^thread.Thread,
 
