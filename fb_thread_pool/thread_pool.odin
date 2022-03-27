@@ -56,7 +56,7 @@ nil_allocator :: mem.Allocator{
 // it is destroyed. If thread_count < 1, thread count 1 will be used.
 //
 // The thread pool requires an allocator which it either owns, or which is thread safe.
-init :: proc(pool: ^Pool, thread_count: int, allocator := nil_allocator) {
+init :: proc(pool: ^Pool, thread_count: int, allocator: mem.Allocator) {
 	worker_thread_internal :: proc(t: ^thread.Thread) {
 		pool := (^Pool)(t.data)
 
