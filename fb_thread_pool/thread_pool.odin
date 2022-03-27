@@ -24,9 +24,8 @@ Task :: struct {
 
 // Do not access the pool's members directly while the pool threads are running,
 // since they use different kinds of locking and mutual exclusion devices.
-// Careless access can and will lead to nasty bugs. Once in initialized, the
-// pool's memory address is not allowed to change after it is initialized until
-// it is destroyed.
+// Careless access can and will lead to nasty bugs. Once initialized, the
+// pool's memory address is not allowed to change until it is destroyed.
 Pool :: struct {
 	allocator: mem.Allocator,
 	mutex: sync.Mutex,
@@ -124,7 +123,7 @@ join :: proc(pool: ^Pool) {
 // Add a task to the thread pool.
 //
 // Tasks can be added from any thread, not just the thread that created
-// the thread pool. You can even add tasks from other tasks.
+// the thread pool. You can even add tasks from inside other tasks.
 //
 // Each task also needs an allocator which it either owns, or which is thread
 // safe. By default, allocations in the task are disabled by use of the
