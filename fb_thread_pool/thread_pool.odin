@@ -21,9 +21,10 @@ Task :: struct {
 
 Task_Id :: distinct i32
 
-// Do not access the pool's members directly while the pool threads are
-// running, since they use different kinds of locking and mutual exclusion
-// devices. Careless access can and will lead to nasty bugs.
+// Do not access the pool's members directly while the pool threads are running,
+// since they use different kinds of locking and mutual exclusion devices.
+// Careless access can and will lead to nasty bugs. Once in initialized, the
+// pool's memory address is not allowed to change until it is destroyed.
 Pool :: struct {
 	allocator:             mem.Allocator,
 	mutex:                 sync.Mutex,
@@ -44,6 +45,8 @@ Pool :: struct {
 	tasks_done: [dynamic]Task,
 }
 
+//Once in initialized, the pool's memory address is not allowed to change until
+//it is destroyed.
 init :: proc(pool: ^Pool, thread_count: int, allocator := context.allocator) {
 	worker_thread_internal :: proc(t: ^thread.Thread) {
 		pool := (^Pool)(t.data)
@@ -190,9 +193,9 @@ do_work :: proc(pool: ^Pool, task: ^Task) {
 	defer sync.unlock(&pool.mutex)
 
 	append(&pool.tasks_done, task^)
-	intrinsics.atomic_sub(&pool.num_in_processing, 1)
-	intrinsics.atomic_sub(&pool.num_outstanding, 1)
 	intrinsics.atomic_add(&pool.num_done, 1)
+	intrinsics.atomic_sub(&pool.num_outstanding, 1)
+	intrinsics.atomic_sub(&pool.num_in_processing, 1)
 }
 
 // Process the rest of the tasks, also use this thread for processing, then join
